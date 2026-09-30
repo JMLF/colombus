@@ -2,14 +2,21 @@
 import argparse
 import fnmatch
 import json
+import pathlib
 import statistics
 import time
 import uuid
 
-from seed import NEEDLES, ground_truth_path
-from sqlmodel import Session, text
+from seed import PROJECT_NAME
+from sqlmodel import Session, select, text
 
-from app.models.sql_model import engine
+from app.models.sql_model import Project, engine
+
+MANIFEST_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent.parent.parent.parent
+    / "data"
+    / "notebooks.manifest.json"
+)
 
 TOKEN_DELIMITER = "\x1f"
 
@@ -61,8 +68,7 @@ def timing_stats(samples_ms: list[float]) -> dict:
     }
 
 
-def run_query(project_id: uuid.UUID, steps: list[str], repeat: int) -> dict:
-    pattern = compile_pattern(steps)
+def run_query(project_id: uuid.UUID, pattern: str, repeat: int) -> dict:
     params = {
         "project_id": str(project_id),
         "delimiter": TOKEN_DELIMITER,
@@ -98,39 +104,39 @@ def sequence_matches(sequence: list[str], terms: list[str]) -> bool:
     return False
 
 
-def build_test_battery() -> list[tuple[str, list[str]]]:
-    battery = [(f"{name}_exact", terms) for name, terms in NEEDLES.items()]
-    battery.append(
-        (
-            "needle_a_wildcard",
-            [
-                "Data *",
-                "Data Preparation",
-                "Data Modeling",
-                "Model Evaluation",
-                "Model *",
-                "Save Results",
-            ],
-        )
-    )
+def resolve_project_id() -> uuid.UUID:
+    with Session(engine) as session:
+        project = session.exec(
+            select(Project).where(Project.name == PROJECT_NAME)
+        ).first()
+        if project is None:
+            raise SystemExit(
+                f"Project '{PROJECT_NAME}' not found, run scripts/seed.py first"
+            )
+        return project.id
+
+
+def build_test_battery(needles: dict[str, list[str]]) -> list[tuple[str, list[str]]]:
+    battery = [(f"{name}_exact", terms) for name, terms in needles.items()]
+    battery.append(("wildcard_data_then_model", ["Data *", "Model *"]))
     battery.append(("no_match_6", ["Save Results"] * 6))
     battery.append(("long_10_terms", ["Data Preparation", "Model Evaluation"] * 5))
     return battery
 
 
 def run_test_mode(repeat: int) -> None:
-    ground_truth = json.loads(ground_truth_path().read_text())
-    project_id = uuid.UUID(ground_truth["project_id"])
-    profiles = ground_truth["profiles"]
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    profiles = manifest["notebooks"]
+    project_id = resolve_project_id()
 
     all_correct = True
-    for name, terms in build_test_battery():
+    for name, terms in build_test_battery(manifest["needles"]):
         expected = sorted(
             profile_name
             for profile_name, profile in profiles.items()
             if sequence_matches(profile["steps"], terms)
         )
-        result = run_query(project_id, terms, repeat)
+        result = run_query(project_id, compile_pattern(terms), repeat)
         actual = sorted(result["matches"])
         correct = actual == expected
         all_correct = all_correct and correct
@@ -146,12 +152,11 @@ def run_test_mode(repeat: int) -> None:
         raise SystemExit(1)
 
 
-def run_query_mode(steps: list[str], project_id: uuid.UUID | None, repeat: int) -> None:
+def run_query_mode(pattern: str, project_id: uuid.UUID | None, repeat: int) -> None:
     if project_id is None:
-        ground_truth = json.loads(ground_truth_path().read_text())
-        project_id = uuid.UUID(ground_truth["project_id"])
+        project_id = resolve_project_id()
 
-    result = run_query(project_id, steps, repeat)
+    result = run_query(project_id, pattern, repeat)
     print(json.dumps(result, indent=2))
 
 
@@ -160,20 +165,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--steps",
         nargs="+",
-        help="Ordered step names to match; '*'/'?' wildcards allowed. Ignored with --test.",
+        help="Ordered step names, one term per step. e.g. --steps 'Data *' 'Data Modeling' ",
     )
     parser.add_argument(
-        "--project-id",
-        type=uuid.UUID,
-        default=None,
-        help="Defaults to the project seeded by scripts/seed.py.",
+        "--regex",
+        help="Raw Postgres ERE matched against sequence, encoded as chr(31) e.g. --regex 'Data Modeling.*Model Deployment'",
     )
+    parser.add_argument("--project-id", type=uuid.UUID, default=None)
     parser.add_argument("--repeat", type=int, default=20)
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Run the built-in correctness+timing battery instead of a custom query.",
-    )
+    parser.add_argument("--test", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -182,9 +182,10 @@ def main(argv: list[str] | None = None) -> None:
     if args.test:
         run_test_mode(args.repeat)
         return
-    if not args.steps:
-        raise SystemExit("--steps is required unless --test is passed")
-    run_query_mode(args.steps, args.project_id, args.repeat)
+    if not args.regex and not args.steps:
+        raise SystemExit("pass --steps, --regex, or --test")
+    pattern = args.regex or compile_pattern(args.steps)
+    run_query_mode(pattern, args.project_id, args.repeat)
 
 
 if __name__ == "__main__":
