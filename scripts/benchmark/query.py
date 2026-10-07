@@ -20,7 +20,7 @@ MANIFEST_PATH = (
 
 TOKEN_DELIMITER = "\x1f"
 
-QUERY = """
+PROFILES_QUERY = """
     WITH sequences AS (
         SELECT
             p.name AS profile_name,
@@ -34,6 +34,47 @@ QUERY = """
     SELECT profile_name
     FROM sequences
     WHERE token_string ~ :pattern
+"""
+
+SEQUENCES_QUERY = """
+    WITH sequences AS (
+        SELECT
+            p.name AS profile_name,
+            :delimiter || string_agg(s.name, :delimiter ORDER BY s.position) || :delimiter
+                AS token_string,
+            array_agg(s.id ORDER BY s.position) AS step_ids
+        FROM step s
+        JOIN profile p ON p.id = s.profile_id
+        WHERE p.project_id = :project_id
+        GROUP BY p.id, p.name
+    ), occurrences AS (
+        SELECT
+            seq.profile_name,
+            seq.token_string,
+            seq.step_ids,
+            regexp_instr(seq.token_string, :pattern, 1, gs.n, 0) AS match_start,
+            regexp_instr(seq.token_string, :pattern, 1, gs.n, 1) AS match_end
+        FROM sequences seq
+        CROSS JOIN LATERAL generate_series(1, array_length(seq.step_ids, 1)) AS gs(n)
+    ), matches AS (
+        SELECT
+            profile_name,
+            step_ids,
+            match_start,
+            length(substring(token_string FROM 1 FOR match_start - 1))
+                - length(replace(substring(token_string FROM 1 FOR match_start - 1), :delimiter, ''))
+                AS start_step_index,
+            length(substring(token_string FROM match_start FOR match_end - match_start))
+                - length(replace(substring(token_string FROM match_start FOR match_end - match_start), :delimiter, ''))
+                AS matched_step_count
+        FROM occurrences
+        WHERE match_start > 0
+    )
+    SELECT
+        profile_name,
+        step_ids[start_step_index + 1 : start_step_index + matched_step_count] AS matched_step_ids
+    FROM matches
+    ORDER BY profile_name, match_start
 """
 
 
@@ -68,7 +109,7 @@ def timing_stats(samples_ms: list[float]) -> dict:
     }
 
 
-def run_query(project_id: uuid.UUID, pattern: str, repeat: int) -> dict:
+def find_profiles(project_id: uuid.UUID, pattern: str, repeat: int) -> dict:
     params = {
         "project_id": str(project_id),
         "delimiter": TOKEN_DELIMITER,
@@ -80,10 +121,36 @@ def run_query(project_id: uuid.UUID, pattern: str, repeat: int) -> dict:
     with Session(engine) as session:
         for i in range(repeat):
             start = time.perf_counter()
-            rows = session.execute(text(QUERY), params).all()
+            rows = session.execute(text(PROFILES_QUERY), params).all()
             timings_ms.append((time.perf_counter() - start) * 1000)
             if i == 0:
                 matches = sorted(row[0] for row in rows)
+
+    return {"matches": matches, "timing_ms": timing_stats(timings_ms)}
+
+
+def find_matching_sequences(project_id: uuid.UUID, pattern: str, repeat: int) -> dict:
+    params = {
+        "project_id": str(project_id),
+        "delimiter": TOKEN_DELIMITER,
+        "pattern": pattern,
+    }
+
+    timings_ms = []
+    matches: list[dict] = []
+    with Session(engine) as session:
+        for i in range(repeat):
+            start = time.perf_counter()
+            rows = session.execute(text(SEQUENCES_QUERY), params).all()
+            timings_ms.append((time.perf_counter() - start) * 1000)
+            if i == 0:
+                matches = [
+                    {
+                        "profile_name": row[0],
+                        "matched_step_ids": [str(step_id) for step_id in row[1]],
+                    }
+                    for row in rows
+                ]
 
     return {"matches": matches, "timing_ms": timing_stats(timings_ms)}
 
@@ -136,7 +203,7 @@ def run_test_mode(repeat: int) -> None:
             for profile_name, profile in profiles.items()
             if sequence_matches(profile["steps"], terms)
         )
-        result = run_query(project_id, compile_pattern(terms), repeat)
+        result = find_profiles(project_id, compile_pattern(terms), repeat)
         actual = sorted(result["matches"])
         correct = actual == expected
         all_correct = all_correct and correct
@@ -152,11 +219,21 @@ def run_test_mode(repeat: int) -> None:
         raise SystemExit(1)
 
 
-def run_query_mode(pattern: str, project_id: uuid.UUID | None, repeat: int) -> None:
+def find_profiles_mode(pattern: str, project_id: uuid.UUID | None, repeat: int) -> None:
     if project_id is None:
         project_id = resolve_project_id()
 
-    result = run_query(project_id, pattern, repeat)
+    result = find_profiles(project_id, pattern, repeat)
+    print(json.dumps(result, indent=2))
+
+
+def find_matching_sequences_mode(
+    pattern: str, project_id: uuid.UUID | None, repeat: int
+) -> None:
+    if project_id is None:
+        project_id = resolve_project_id()
+
+    result = find_matching_sequences(project_id, pattern, repeat)
     print(json.dumps(result, indent=2))
 
 
@@ -174,6 +251,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project-id", type=uuid.UUID, default=None)
     parser.add_argument("--repeat", type=int, default=20)
     parser.add_argument("--test", action="store_true")
+    parser.add_argument(
+        "--mode", choices=["sequences", "profiles"], default="sequences"
+    )
     return parser.parse_args(argv)
 
 
@@ -185,7 +265,10 @@ def main(argv: list[str] | None = None) -> None:
     if not args.regex and not args.steps:
         raise SystemExit("pass --steps, --regex, or --test")
     pattern = args.regex or compile_pattern(args.steps)
-    run_query_mode(pattern, args.project_id, args.repeat)
+    if args.mode == "sequences":
+        find_matching_sequences_mode(pattern, args.project_id, args.repeat)
+    else:
+        find_profiles_mode(pattern, args.project_id, args.repeat)
 
 
 if __name__ == "__main__":
