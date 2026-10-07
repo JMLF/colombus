@@ -5,9 +5,10 @@ import pathlib
 import uuid
 
 from sqlalchemy import delete, insert
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, select, text
 
 from app.models.sql_model import Profile, Project, Step, engine
+from app.utils import encode_profile
 
 PROJECT_NAME = "scale-test"
 NOTEBOOKS_DIR = (
@@ -15,6 +16,23 @@ NOTEBOOKS_DIR = (
     / "data"
     / "notebooks"
 )
+PPM_FUNCTION_SQL_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent.parent / "ppm_to_regex_function.sql"
+)
+
+
+def ensure_ppm_to_regex_installed(session: Session) -> None:
+    try:
+        session.execute(text("CREATE EXTENSION IF NOT EXISTS plpython3u"))
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    statements = [s.strip() for s in PPM_FUNCTION_SQL_PATH.read_text().split(";")]
+    for statement in statements:
+        if statement:
+            session.execute(text(statement))
+    session.commit()
 
 
 def get_or_create_project(session: Session, reset: bool) -> Project:
@@ -67,7 +85,7 @@ def build_rows(
                     "name": name,
                     "source": [{"name": s} for s in sequence],
                 },
-                "encoded_profile": " -> ".join(sequence),
+                "encoded_profile": encode_profile(sequence),
             }
         )
         for position, step_name in enumerate(sequence):
@@ -104,6 +122,7 @@ def main(argv: list[str] | None = None) -> None:
     notebooks = load_notebooks()
 
     with Session(engine) as session:
+        ensure_ppm_to_regex_installed(session)
         project = get_or_create_project(session, args.reset)
         project_id = project.id
         profile_rows, step_rows = build_rows(project_id, notebooks)
