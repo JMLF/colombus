@@ -55,6 +55,7 @@ def run_dsl_query(project_id: uuid.UUID, terms: list[str], repeat: int) -> dict:
                 session.rollback()
                 return {
                     "matches": [],
+                    "match_occurrences": -1,
                     "timing_ms": TIMED_OUT_TIMING,
                     "timed_out": True,
                 }
