@@ -5,6 +5,7 @@ import time
 import uuid
 
 from query import MANIFEST_PATH, resolve_project_id, sequence_matches, timing_stats
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, text
 
 from app.models.api_model import PatternGroup, PatternMetaCharacters
@@ -12,6 +13,15 @@ from app.models.sql_model import engine
 from app.utils.convert_ppm_to_sql import convert_steps_to_sql_query_template
 
 GAP_MARKER = "*"
+
+TIMED_OUT_TIMING = {
+    "count": -1,
+    "min_ms": -1,
+    "mean_ms": -1,
+    "median_ms": -1,
+    "p95_ms": -1,
+    "max_ms": -1,
+}
 
 
 def build_pattern(terms: list[str]) -> list[PatternGroup]:
@@ -37,7 +47,17 @@ def run_dsl_query(project_id: uuid.UUID, terms: list[str], repeat: int) -> dict:
     with Session(engine) as session:
         for i in range(repeat):
             start = time.perf_counter()
-            rows = session.execute(text(query)).all()
+            try:
+                rows = session.execute(text(query)).all()
+            except OperationalError as e:
+                if "statement timeout" not in str(e):
+                    raise
+                session.rollback()
+                return {
+                    "matches": [],
+                    "timing_ms": TIMED_OUT_TIMING,
+                    "timed_out": True,
+                }
             timings_ms.append((time.perf_counter() - start) * 1000)
             if i == 0:
                 matches = sorted({row[0] for row in rows})
@@ -58,6 +78,12 @@ def run_test_mode(repeat: int) -> None:
             if sequence_matches(profile["steps"], terms)
         )
         result = run_dsl_query(project_id, terms, repeat)
+
+        if result.get("timed_out"):
+            all_correct = False
+            print(f"[TIMEOUT] {name} ({len(terms)} terms)")
+            continue
+
         actual = sorted(result["matches"])
         correct = actual == expected
         all_correct = all_correct and correct
