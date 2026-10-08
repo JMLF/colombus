@@ -43,7 +43,7 @@ def run_dsl_query(project_id: uuid.UUID, terms: list[str], repeat: int) -> dict:
     query = convert_steps_to_sql_query_template(project_id, pattern)
 
     timings_ms = []
-    matches: list[str] = []
+    matches: list[dict] = []
     with Session(engine) as session:
         for i in range(repeat):
             start = time.perf_counter()
@@ -60,9 +60,21 @@ def run_dsl_query(project_id: uuid.UUID, terms: list[str], repeat: int) -> dict:
                 }
             timings_ms.append((time.perf_counter() - start) * 1000)
             if i == 0:
-                matches = sorted({row[0] for row in rows})
+                grouped: dict[str, list] = {}
+                for row in rows:
+                    occurrence = [str(step_id) for col in row[1:] for step_id in col]
+                    grouped.setdefault(row[0], []).append(occurrence)
+                matches = [
+                    {"profile_name": name, "occurrences": occurrences}
+                    for name, occurrences in grouped.items()
+                ]
 
-    return {"matches": matches, "timing_ms": timing_stats(timings_ms)}
+    match_occurrences = sum(len(m["occurrences"]) for m in matches)
+    return {
+        "matches": matches,
+        "match_occurrences": match_occurrences,
+        "timing_ms": timing_stats(timings_ms),
+    }
 
 
 def run_test_mode(repeat: int) -> None:
@@ -84,7 +96,7 @@ def run_test_mode(repeat: int) -> None:
             print(f"[TIMEOUT] {name} ({len(terms)} terms)")
             continue
 
-        actual = sorted(result["matches"])
+        actual = sorted(m["profile_name"] for m in result["matches"])
         correct = actual == expected
         all_correct = all_correct and correct
 

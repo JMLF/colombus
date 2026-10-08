@@ -144,15 +144,21 @@ def find_matching_sequences(project_id: uuid.UUID, pattern: str, repeat: int) ->
             rows = session.execute(text(SEQUENCES_QUERY), params).all()
             timings_ms.append((time.perf_counter() - start) * 1000)
             if i == 0:
+                grouped: dict[str, list] = {}
+                for row in rows:
+                    occurrence = [str(step_id) for step_id in row[1]]
+                    grouped.setdefault(row[0], []).append(occurrence)
                 matches = [
-                    {
-                        "profile_name": row[0],
-                        "matched_step_ids": [str(step_id) for step_id in row[1]],
-                    }
-                    for row in rows
+                    {"profile_name": name, "occurrences": occurrences}
+                    for name, occurrences in grouped.items()
                 ]
 
-    return {"matches": matches, "timing_ms": timing_stats(timings_ms)}
+    match_occurrences = sum(len(m["occurrences"]) for m in matches)
+    return {
+        "matches": matches,
+        "match_occurrences": match_occurrences,
+        "timing_ms": timing_stats(timings_ms),
+    }
 
 
 def _term_matches(term: str, name: str) -> bool:
@@ -203,8 +209,8 @@ def run_test_mode(repeat: int) -> None:
             for profile_name, profile in profiles.items()
             if sequence_matches(profile["steps"], terms)
         )
-        result = find_profiles(project_id, compile_pattern(terms), repeat)
-        actual = sorted(result["matches"])
+        result = find_matching_sequences(project_id, compile_pattern(terms), repeat)
+        actual = sorted(m["profile_name"] for m in result["matches"])
         correct = actual == expected
         all_correct = all_correct and correct
 
