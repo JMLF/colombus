@@ -1,14 +1,26 @@
 import ProjectTaxonomyList from "@/components/project-taxonomy-list";
+import { SectionHeading } from "@/components/section-heading";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { useColombusStore } from "@/store";
+
+const DISPLAYED_LEVEL_ITEMS = [
+	{ value: "1", label: "Workflow" },
+	{ value: "2", label: "Step" },
+	{ value: "3", label: "MetaInstruction" },
+	{ value: "4", label: "Code" },
+];
 
 const ProfileExplorerGraphSettingsBar: React.FunctionComponent<
 	React.HTMLAttributes<HTMLDivElement>
@@ -17,6 +29,7 @@ const ProfileExplorerGraphSettingsBar: React.FunctionComponent<
 		(state) => state.referenceDiffProfile,
 	);
 	const currentPattern = useColombusStore((state) => state.currentPattern);
+	const displayedLevel = useColombusStore((state) => state.displayedLevel);
 	const setDisplayedLevel = useColombusStore(
 		(state) => state.setDisplayedLevel,
 	);
@@ -34,31 +47,38 @@ const ProfileExplorerGraphSettingsBar: React.FunctionComponent<
 	return (
 		<div
 			{...divProps}
-			className={`flex flex-col h-full overflow-hidden space-y-4 ${divProps.className ?? ""}`}
+			className={cn("flex flex-col gap-4 overflow-y-auto", divProps.className)}
 		>
-			<div className="space-y-4 shrink-0">
+			<div className="space-y-4">
 				<div className="space-y-2">
-					<p className="font-bold">Displayed levels:</p>
+					<SectionHeading title="Displayed level" />
 					<Select
-						onValueChange={(v) => setDisplayedLevel(Number.parseInt(v, 10))}
-						defaultValue="2"
+						onValueChange={(v) =>
+							setDisplayedLevel(Number.parseInt(v ?? "2", 10))
+						}
+						value={String(displayedLevel)}
+						items={DISPLAYED_LEVEL_ITEMS}
 					>
-						<SelectTrigger>
+						<SelectTrigger className="w-full">
 							<SelectValue placeholder="Level to display" />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="1">Workflow</SelectItem>
-							<SelectItem value="2">Step</SelectItem>
-							<SelectItem value="3">MetaInstruction</SelectItem>
-							<SelectItem value="4">Code</SelectItem>
+							<SelectGroup>
+								<SelectLabel>Level to display</SelectLabel>
+								{DISPLAYED_LEVEL_ITEMS.map((item) => (
+									<SelectItem key={item.value} value={item.value}>
+										{item.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
 						</SelectContent>
 					</Select>
 				</div>
 				<div className="space-y-2">
-					<p className="font-bold">Customization:</p>
+					<SectionHeading title="Display options" />
 					<div className="flex flex-col space-y-2.5">
 						<div
-							className="flex items-center space-x-2"
+							className="flex items-center gap-3"
 							key="check-weighted-nodes-div"
 						>
 							<Checkbox
@@ -66,54 +86,34 @@ const ProfileExplorerGraphSettingsBar: React.FunctionComponent<
 								checked={useWeightedNodes}
 								onCheckedChange={(c) => setUseWeightedNodes(!!c)}
 							/>
-							<label
-								htmlFor="check-weighted-nodes"
-								className="text-sm font-medium leading-none cursor-pointer"
-							>
-								Use weighted nodes
-							</label>
+							<Label htmlFor="check-weighted-nodes">Use weighted nodes</Label>
 						</div>
 						<RadioGroup
 							key="radio-ppm-nodes-display-div"
 							value={patternCapturedNodesDisplayMode}
 							onValueChange={(value) =>
-								setPatternCapturedNodesDisplayMode(value as any)
+								setPatternCapturedNodesDisplayMode(value)
 							}
 							disabled={!referenceDiffProfile && !currentPattern}
-							className="flex flex-col space-y-1 pt-2"
+							className="w-fit"
 						>
-							<div className="flex items-center space-x-2">
+							<div className="flex items-center gap-3">
 								<RadioGroupItem value="show-all" id="show-all" />
-								<label
-									htmlFor="show-all"
-									className="text-sm font-medium leading-none cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-								>
-									Show all nodes
-								</label>
+								<Label htmlFor="show-all">Show all nodes</Label>
 							</div>
-							<div className="flex items-center space-x-2">
+							<div className="flex items-center gap-3">
 								<RadioGroupItem value="show-fixed" id="show-fixed" />
-								<label
-									htmlFor="show-fixed"
-									className="text-sm font-medium leading-none cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-								>
-									Show fixed nodes
-								</label>
+								<Label htmlFor="show-fixed">Show fixed nodes</Label>
 							</div>
-							<div className="flex items-center space-x-2">
+							<div className="flex items-center gap-3">
 								<RadioGroupItem value="show-variable" id="show-variable" />
-								<label
-									htmlFor="show-variable"
-									className="text-sm font-medium leading-none cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-								>
-									Show variable nodes
-								</label>
+								<Label htmlFor="show-variable">Show variable nodes</Label>
 							</div>
 						</RadioGroup>
 					</div>
 				</div>
 			</div>
-			<ProjectTaxonomyList className="flex-1 min-h-0 mt-1" />
+			<ProjectTaxonomyList />
 		</div>
 	);
 };

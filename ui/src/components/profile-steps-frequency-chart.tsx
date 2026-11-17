@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import BounceLoader from "react-spinners/BounceLoader";
+import { BounceLoader } from "react-spinners";
 import { Legend, PolarAngleAxis, PolarGrid, Radar, RadarChart } from "recharts";
 import { postFrequentStepsData } from "@/api/client";
+import { SectionHeading } from "@/components/section-heading";
 import {
 	type ChartConfig,
 	ChartContainer,
@@ -38,25 +39,22 @@ const ProfileStepsFrequencyChart: React.FunctionComponent<
 		}
 	}, [projectId, availableProfilesNames]);
 
-	if (!projectId || availableProfilesNames.length === 0) {
+	if (!projectId || availableProfilesNames.length === 0 || !frequentStepsData) {
 		return null;
 	}
 
 	return (
-		<div className="w-full h-full flex flex-col">
-			<div className="mb-6 text-center w-full shrink-0">
-				<h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">
-					Steps frequency
-				</h2>
-				<p className="text-xs text-slate-400 dark:text-slate-500 font-medium">
-					Global steps distribution
-				</p>
-			</div>
+		<div className="flex h-full w-full flex-col rounded-lg border p-4">
+			<SectionHeading
+				className="mb-4"
+				title="Steps frequency"
+				description="Global steps distribution"
+			/>
 			<div className="flex-1 flex items-center justify-center w-full">
 				{isLoading ? (
 					<BounceLoader color="green" loading={isLoading} />
 				) : (
-					<ChartContainer config={chartConfig} className="w-full max-h-[500px]">
+					<ChartContainer config={chartConfig} className="w-full max-h-125">
 						<RadarChart data={frequentStepsData}>
 							<ChartTooltip cursor={false} content={<ChartTooltipContent />} />
 							<PolarGrid />
